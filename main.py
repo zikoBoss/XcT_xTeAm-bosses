@@ -31,12 +31,26 @@ from xKEys import MyMessage
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ================== إعدادات ==================
-FF_UID = "4357307133"
-FF_PASSWORD = "24DA9E8F604A3D0F1F17589A398726220B90E4F532187211C240FED0BC43F710"
-API_KEY = "zakaria_li7wak"
+FF_UID = "4812753412"
+FF_PASSWORD = "492C6754CD1BB892C11548121956ADF254468453FA0A7A25FA6367F9DF926221"
+API_KEY = "ziko"
 ACCOUNTS_FILE = "accs.json"
 SPAM_DURATION = 30 * 60  # 30 دقيقة
 AUTO_RESTART_HOURS = 6  # إعادة تشغيل كل 6 ساعات
+
+# قائمة الحسابات الاحتياطية للسبام (تُستخدم في حال عدم وجود accs.json)
+DEFAULT_SPAM_ACCOUNTS = {
+    "4621889139": "YAKOUB_XVEY51BU15ZKADER",
+    "4621890577": "YAKOUB_XV2PEEQM8G4KADER",
+    "4621890995": "YAKOUB_XVWHYKP9IVLKADER",
+    "4621891384": "YAKOUB_XV9FIDIWP1YKADER",
+    "4621891954": "YAKOUB_XVGT5U2YHPRKADER",
+    "4621892682": "YAKOUB_XVUZSENZ6RRKADER",
+    "4621893487": "YAKOUB_XVMST9X1ESGKADER",
+    "4621894196": "YAKOUB_XVUYHHK75T6KADER",
+    "4621894882": "YAKOUB_XVVAN6OCAEEKADER",
+    "4621895382": "YAKOUB_XVFR53FO6UCKADER"
+}
 
 online_writer = None
 whisper_writer = None
@@ -363,22 +377,6 @@ _max_active = 1000
 _clis = []
 _clis_lock = threading.Lock()
 
-def ensure_default_accounts():
-    """إنشاء ملف accs.json افتراضي إذا لم يكن موجودًا"""
-    if not os.path.exists(ACCOUNTS_FILE):
-        default_accounts = {
-            "4357307133": "24DA9E8F604A3D0F1F17589A398726220B90E4F532187211C240FED0BC43F710"
-        }
-        with open(ACCOUNTS_FILE, 'w') as f:
-            json.dump(default_accounts, f)
-        logging.info("تم إنشاء ملف accs.json افتراضي بحساب واحد.")
-        return default_accounts
-    try:
-        with open(ACCOUNTS_FILE) as f:
-            return json.load(f)
-    except:
-        return {}
-
 def ua_spam():
     versions = ['4.0.18P6','4.0.19P7','4.0.20P1','4.1.0P3','4.1.5P2','4.2.1P8','4.2.3P1','5.0.1B2','5.0.2P4','5.1.0P1','5.2.0B1','5.2.5P3','5.3.0B1','5.3.2P2','5.4.0P1','5.4.3B2','5.5.0P1','5.5.2P3']
     models = ['SM-A125F','SM-A225F','SM-A325M','SM-A515F','SM-A725F','SM-M215F','SM-M325FV','Redmi 9A','Redmi 9C','POCO M3','POCO M4 Pro','RMX2185','RMX3085','moto g(9) play','CPH2239','V2027','OnePlus Nord','ASUS_Z01QD']
@@ -651,6 +649,7 @@ def active_spam():
 
 def restart_accounts():
     global _clis, _active_count
+    # إغلاق جميع الحسابات القديمة
     with _clis_lock:
         for c in _clis[:]:
             c.alive = False
@@ -659,14 +658,30 @@ def restart_accounts():
                 if c.sock2: c.sock2.close()
             except: pass
         _clis.clear()
-    with _active_lock: pass
     time.sleep(2)
-    accs = ensure_default_accounts()
+
+    # 1. محاولة تحميل الحسابات من accs.json
+    accs = {}
+    if os.path.exists(ACCOUNTS_FILE):
+        try:
+            with open(ACCOUNTS_FILE) as f:
+                accs = json.load(f)
+        except:
+            pass
+
+    # 2. إذا لم توجد حسابات، نستخدم القائمة الاحتياطية المضمونة
+    if not accs:
+        accs = DEFAULT_SPAM_ACCOUNTS
+        logging.info("لم يتم العثور على accs.json، سيتم استخدام الحسابات الاحتياطية المدمجة.")
+
     loaded = 0
-    for u, p in list(accs.items())[:_max_active]:
+    for u, p in accs.items():
+        if loaded >= _max_active:
+            break
         Cli(u, p)
         loaded += 1
         time.sleep(0.5)
+
     logging.info(f"تم تحميل {loaded} حساب سبام")
     return loaded
 
@@ -674,9 +689,9 @@ def restart_accounts():
 async def auto_restart_scheduler():
     """إعادة تشغيل كاملة كل AUTO_RESTART_HOURS ساعة"""
     while True:
-        await asyncio.sleep(AUTO_RESTART_HOURS * 3600)  # الانتظار لمدة الساعات المحددة
+        await asyncio.sleep(AUTO_RESTART_HOURS * 3600)
         logging.info(f"🔄 إعادة تشغيل تلقائية بعد {AUTO_RESTART_HOURS} ساعة...")
-        os._exit(0)  # إيقاف العملية بالكامل (Railway سيعيد تشغيلها تلقائيًا)
+        os._exit(0)
 
 # ================== نقاط نهاية API ==================
 @app.on_event("startup")
@@ -686,7 +701,7 @@ async def startup():
         logging.error("فشل الاتصال باللعبة!")
     else:
         logging.info("تم الاتصال بنجاح.")
-    # تحميل حسابات السبام (مع إنشاء ملف افتراضي إذا لم يوجد)
+    # تحميل حسابات السبام (مع الاحتياطي)
     threading.Thread(target=restart_accounts, daemon=True).start()
     # بدء مهمة إعادة التشغيل التلقائي
     asyncio.create_task(auto_restart_scheduler())
