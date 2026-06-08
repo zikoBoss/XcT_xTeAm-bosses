@@ -8,6 +8,7 @@ import time
 import random
 import socket as sock
 import gzip
+import sys
 from io import BytesIO
 from datetime import datetime
 
@@ -30,11 +31,12 @@ from xKEys import MyMessage
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ================== إعدادات ==================
-FF_UID = "4812753412"
-FF_PASSWORD = "492C6754CD1BB892C11548121956ADF254468453FA0A7A25FA6367F9DF926221"
-API_KEY = "ziko"
+FF_UID = "4357307133"
+FF_PASSWORD = "24DA9E8F604A3D0F1F17589A398726220B90E4F532187211C240FED0BC43F710"
+API_KEY = "zakaria_li7wak"
 ACCOUNTS_FILE = "accs.json"
 SPAM_DURATION = 30 * 60  # 30 دقيقة
+AUTO_RESTART_HOURS = 6  # إعادة تشغيل كل 6 ساعات
 
 online_writer = None
 whisper_writer = None
@@ -45,7 +47,7 @@ region = None
 app = FastAPI(title="FPI Squad & Spam API")
 logging.basicConfig(level=logging.INFO)
 
-# ================== دوال الاتصال ==================
+# ================== دوال الاتصال (لم تتغير) ==================
 async def GeNeRaTeAccEss(uid, password):
     url = "https://100067.connect.garena.com/oauth/guest/token/grant"
     headers = {
@@ -266,7 +268,7 @@ async def login_to_freefire():
         logging.error(f"Login failed: {e}")
         return False
 
-# ================== أوامر السكواد والرقص ==================
+# ================== أوامر السكواد والرقص (لم تتغير) ==================
 async def cmd_3(uid: int):
     try:
         PAc = await OpEnSq(key, iv, region)
@@ -334,7 +336,6 @@ async def cmd_inv(team_code: str, target_uid: int):
         return False
 
 async def cmd_dance(emote_id: int, team_code: str, uids: list):
-    """رقصة مع معرف الإيموجي مباشرة"""
     try:
         p = await GenJoinSquadsPacket(team_code, key, iv)
         await SEndPacKeT('OnLine', p)
@@ -351,7 +352,7 @@ async def cmd_dance(emote_id: int, team_code: str, uids: list):
         logging.error(f"cmd_dance error: {e}")
         return False
 
-# ================== نظام السبام المتكامل ==================
+# ================== نظام السبام (مع إصلاح تلقائي) ==================
 _target_owners = {}
 _target_owners_lock = threading.Lock()
 _tasks = {}
@@ -361,6 +362,22 @@ _active_lock = threading.Lock()
 _max_active = 1000
 _clis = []
 _clis_lock = threading.Lock()
+
+def ensure_default_accounts():
+    """إنشاء ملف accs.json افتراضي إذا لم يكن موجودًا"""
+    if not os.path.exists(ACCOUNTS_FILE):
+        default_accounts = {
+            "4357307133": "24DA9E8F604A3D0F1F17589A398726220B90E4F532187211C240FED0BC43F710"
+        }
+        with open(ACCOUNTS_FILE, 'w') as f:
+            json.dump(default_accounts, f)
+        logging.info("تم إنشاء ملف accs.json افتراضي بحساب واحد.")
+        return default_accounts
+    try:
+        with open(ACCOUNTS_FILE) as f:
+            return json.load(f)
+    except:
+        return {}
 
 def ua_spam():
     versions = ['4.0.18P6','4.0.19P7','4.0.20P1','4.1.0P3','4.1.5P2','4.2.1P8','4.2.3P1','5.0.1B2','5.0.2P4','5.1.0P1','5.2.0B1','5.2.5P3','5.3.0B1','5.3.2P2','5.4.0P1','5.4.3B2','5.5.0P1','5.5.2P3']
@@ -644,18 +661,22 @@ def restart_accounts():
         _clis.clear()
     with _active_lock: pass
     time.sleep(2)
-    try:
-        with open(ACCOUNTS_FILE) as f: accs = json.load(f)
-        loaded = 0
-        for u, p in list(accs.items())[:_max_active]:
-            Cli(u, p)
-            loaded += 1
-            time.sleep(0.5)
-        logging.info(f"تم تحميل {loaded} حساب سبام")
-        return loaded
-    except Exception as e:
-        logging.error(f"[خطأ إعادة تشغيل السبام] {e}")
-        return 0
+    accs = ensure_default_accounts()
+    loaded = 0
+    for u, p in list(accs.items())[:_max_active]:
+        Cli(u, p)
+        loaded += 1
+        time.sleep(0.5)
+    logging.info(f"تم تحميل {loaded} حساب سبام")
+    return loaded
+
+# ================== إعادة التشغيل التلقائي ==================
+async def auto_restart_scheduler():
+    """إعادة تشغيل كاملة كل AUTO_RESTART_HOURS ساعة"""
+    while True:
+        await asyncio.sleep(AUTO_RESTART_HOURS * 3600)  # الانتظار لمدة الساعات المحددة
+        logging.info(f"🔄 إعادة تشغيل تلقائية بعد {AUTO_RESTART_HOURS} ساعة...")
+        os._exit(0)  # إيقاف العملية بالكامل (Railway سيعيد تشغيلها تلقائيًا)
 
 # ================== نقاط نهاية API ==================
 @app.on_event("startup")
@@ -665,8 +686,10 @@ async def startup():
         logging.error("فشل الاتصال باللعبة!")
     else:
         logging.info("تم الاتصال بنجاح.")
-    # تحميل حسابات السبام
+    # تحميل حسابات السبام (مع إنشاء ملف افتراضي إذا لم يوجد)
     threading.Thread(target=restart_accounts, daemon=True).start()
+    # بدء مهمة إعادة التشغيل التلقائي
+    asyncio.create_task(auto_restart_scheduler())
 
 def check_auth(api_key: str):
     if api_key != API_KEY:
@@ -728,6 +751,13 @@ async def status(uid: int = Query(...), api_key: str = Query("")):
     active = uid in active_spam()
     return {"status": "active" if active else "inactive", "uid": uid}
 
+@app.get("/restart")
+async def restart(api_key: str = Query("")):
+    """إعادة تشغيل يدوي للخادم"""
+    check_auth(api_key)
+    logging.info("🔄 إعادة تشغيل يدوية...")
+    os._exit(0)
+
 @app.get("/health")
 async def health():
     return {
@@ -735,7 +765,8 @@ async def health():
         "connected": online_writer is not None,
         "region": region,
         "spam_active": len(active_spam()),
-        "spam_accounts": len(_clis)
+        "spam_accounts": len(_clis),
+        "auto_restart_hours": AUTO_RESTART_HOURS
     }
 
 if __name__ == "__main__":
