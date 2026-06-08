@@ -9,6 +9,7 @@ import random
 import socket as sock
 import gzip
 import sys
+import http.client          # ← ضروري لـ majorLogin_spam
 from io import BytesIO
 from datetime import datetime
 
@@ -26,14 +27,14 @@ from xC4 import (
     GeneRaTePk, CrEaTe_ProTo, Ua, EnC_PacKeT, DecodE_HeX,
     Key as XC4_KEY, Iv as XC4_IV
 )
-from xKEys import MyMessage
+from xKEys import MyMessage   # ← ضروري لـ getKiv_spam
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ================== إعدادات ==================
 FF_UID = "4812753412"
 FF_PASSWORD = "492C6754CD1BB892C11548121956ADF254468453FA0A7A25FA6367F9DF926221"
-API_KEY = "ziko"
+API_KEY = "zakaria_li7wak"
 ACCOUNTS_FILE = "accs.json"
 SPAM_DURATION = 30 * 60  # 30 دقيقة
 AUTO_RESTART_HOURS = 6  # إعادة تشغيل كل 6 ساعات
@@ -562,6 +563,19 @@ def login_spam(u, p):
     auth = buildAuth_spam(jwtTok, k, iv, ts, d[1]['data'])
     return auth, k, iv, ip, port, ip2, port2
 
+def acquire_connection_spam():
+    global _active_count
+    with _active_lock:
+        if _active_count < _max_active:
+            _active_count += 1
+            return True
+        return False
+
+def release_connection_spam():
+    global _active_count
+    with _active_lock:
+        if _active_count > 0: _active_count -= 1
+
 class Cli:
     def __init__(self, u, p):
         self.u, self.p = u, p
@@ -573,9 +587,14 @@ class Cli:
 
     def _run(self):
         while True:
+            acquired = False
             try:
+                while not acquire_connection_spam(): time.sleep(5)
+                acquired = True
                 res = login_spam(self.u, self.p)
-                if not res: time.sleep(10); continue
+                if not res:
+                    release_connection_spam(); acquired = False
+                    time.sleep(10); continue
                 auth, k, iv, ip, port, ip2, port2 = res
                 self.key, self.iv = k, iv
                 self.sock1 = sock.create_connection((ip, int(port)), timeout=30)
@@ -602,6 +621,7 @@ class Cli:
                         if s: s.close()
                     except: pass
                 self.sock1 = self.sock2 = None
+                if acquired: release_connection_spam(); acquired = False
             time.sleep(5)
 
 def _spamLoop(uid, stop):
@@ -649,7 +669,6 @@ def active_spam():
 
 def restart_accounts():
     global _clis, _active_count
-    # إغلاق جميع الحسابات القديمة
     with _clis_lock:
         for c in _clis[:]:
             c.alive = False
@@ -658,9 +677,9 @@ def restart_accounts():
                 if c.sock2: c.sock2.close()
             except: pass
         _clis.clear()
+    with _active_lock: _active_count = 0
     time.sleep(2)
 
-    # 1. محاولة تحميل الحسابات من accs.json
     accs = {}
     if os.path.exists(ACCOUNTS_FILE):
         try:
@@ -669,7 +688,6 @@ def restart_accounts():
         except:
             pass
 
-    # 2. إذا لم توجد حسابات، نستخدم القائمة الاحتياطية المضمونة
     if not accs:
         accs = DEFAULT_SPAM_ACCOUNTS
         logging.info("لم يتم العثور على accs.json، سيتم استخدام الحسابات الاحتياطية المدمجة.")
@@ -687,7 +705,6 @@ def restart_accounts():
 
 # ================== إعادة التشغيل التلقائي ==================
 async def auto_restart_scheduler():
-    """إعادة تشغيل كاملة كل AUTO_RESTART_HOURS ساعة"""
     while True:
         await asyncio.sleep(AUTO_RESTART_HOURS * 3600)
         logging.info(f"🔄 إعادة تشغيل تلقائية بعد {AUTO_RESTART_HOURS} ساعة...")
@@ -701,9 +718,7 @@ async def startup():
         logging.error("فشل الاتصال باللعبة!")
     else:
         logging.info("تم الاتصال بنجاح.")
-    # تحميل حسابات السبام (مع الاحتياطي)
     threading.Thread(target=restart_accounts, daemon=True).start()
-    # بدء مهمة إعادة التشغيل التلقائي
     asyncio.create_task(auto_restart_scheduler())
 
 def check_auth(api_key: str):
