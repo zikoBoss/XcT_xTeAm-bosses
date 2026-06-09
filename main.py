@@ -3,13 +3,21 @@ import ssl
 import logging
 import os
 import sys
+import json
 from datetime import datetime
+from typing import Optional, Dict
 
 import aiohttp
 import urllib3
 
 from fastapi import FastAPI, Query, HTTPException
 import uvicorn
+
+from aiogram import Bot, Dispatcher, types
+from aiogram.filters import Command
+from aiogram.types import Message
+from aiogram.enums import ParseMode
+from aiogram.client.default import DefaultBotProperties
 
 from xC4 import (
     OpEnSq, cHSq, SEnd_InV, ExiT, GenJoinSquadsPacket, Emote_k,
@@ -18,11 +26,48 @@ from xC4 import (
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# ================== إعدادات ==================
-FF_UID = "4812753412"
-FF_PASSWORD = "492C6754CD1BB892C11548121956ADF254468453FA0A7A25FA6367F9DF926221"
-API_KEY = "zakaria_li7wak"
-AUTO_RESTART_HOURS = 4  # إعادة تشغيل كل 4 ساعات
+# ================== إعدادات عامة ==================
+CONFIG_FILE = "config.json"
+DEFAULT_CONFIG = {
+    "api_key": "zakaria_li7wak",
+    "ff_uid": "4350165496",
+    "ff_password": "191F72DB7CCC970DD46300F7FE7A34F42D913942E0077508C5BBA23B58752839",
+    "auto_restart_hours": 4,
+    "api_enabled": True,
+    "backup_accounts": {
+        "4621889139": "YAKOUB_XVEY51BU15ZKADER",
+        "4621890577": "YAKOUB_XV2PEEQM8G4KADER",
+        "4621890995": "YAKOUB_XVWHYKP9IVLKADER",
+        "4621891384": "YAKOUB_XV9FIDIWP1YKADER",
+        "4621891954": "YAKOUB_XVGT5U2YHPRKADER"
+    }
+}
+
+BOT_TOKEN = "8299557522:AAHNa8PxOiN7WRvBOr_zhnx2MeNBPWtEqXE"  # ⚠️ استبدله بتوكن بوتك
+ADMIN_ID = 6848455321
+
+# تحميل الإعدادات
+def load_config():
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE) as f:
+                return json.load(f)
+        except:
+            pass
+    return DEFAULT_CONFIG.copy()
+
+def save_config(cfg):
+    with open(CONFIG_FILE, 'w') as f:
+        json.dump(cfg, f, indent=2)
+
+config = load_config()
+
+FF_UID = config["ff_uid"]
+FF_PASSWORD = config["ff_password"]
+API_KEY = config["api_key"]
+AUTO_RESTART_HOURS = config["auto_restart_hours"]
+API_ENABLED = config["api_enabled"]
+BACKUP_ACCOUNTS = config["backup_accounts"]
 
 online_writer = None
 whisper_writer = None
@@ -198,7 +243,7 @@ async def SEndPacKeT(typE, packet):
         whisper_writer.write(packet)
         await online_writer.drain()
 
-# ================== تسجيل الدخول ==================
+# ================== تسجيل الدخول للعبة ==================
 async def login_to_freefire():
     global key, iv, region, online_writer, whisper_writer
     try:
@@ -349,14 +394,157 @@ async def cmd_dance(emote_id: int, team_code: str, uids: list):
         logging.error(f"cmd_dance error: {e}")
         return False
 
+# ================== بوت تلغرام ==================
+bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+dp = Dispatcher()
+
+def is_admin(message: Message):
+    return message.from_user.id == ADMIN_ID
+
+@dp.message(Command("start"))
+async def cmd_start(message: Message):
+    if not is_admin(message): return
+    await message.answer("🎮 أهلاً بك في لوحة تحكم FPI API!\nاستخدم /help لرؤية الأوامر.")
+
+@dp.message(Command("help"))
+async def cmd_help(message: Message):
+    if not is_admin(message): return
+    await message.answer(
+        "📋 الأوامر المتاحة:\n"
+        "/status - حالة الاتصال الحالية\n"
+        "/settings - عرض الإعدادات\n"
+        "/set_account [UID] [PASSWORD] - تغيير حساب اللعبة الرئيسي\n"
+        "/set_restart [ساعات] - تغيير مدة إعادة التشغيل\n"
+        "/restart - إعادة تشغيل الخادم\n"
+        "/enable_api - تفعيل API\n"
+        "/disable_api - تعطيل API\n"
+        "/add_backup [UID] [PASSWORD] - إضافة حساب احتياطي\n"
+        "/backups - عرض الحسابات الاحتياطية\n"
+        "/logs - آخر 10 أسطر من السجل (محاكاة)\n"
+    )
+
+@dp.message(Command("status"))
+async def cmd_status(message: Message):
+    if not is_admin(message): return
+    status = "✅ متصل" if online_writer else "❌ غير متصل"
+    await message.answer(
+        f"📊 الحالة:\n"
+        f"الاتصال باللعبة: {status}\n"
+        f"المنطقة: {region or 'N/A'}\n"
+        f"API: {'مفعل' if API_ENABLED else 'معطل'}\n"
+        f"إعادة التشغيل كل: {AUTO_RESTART_HOURS} ساعة\n"
+        f"الحساب الرئيسي: {FF_UID}\n"
+        f"عدد الحسابات الاحتياطية: {len(BACKUP_ACCOUNTS)}"
+    )
+
+@dp.message(Command("settings"))
+async def cmd_settings(message: Message):
+    await cmd_status(message)
+
+@dp.message(Command("set_account"))
+async def cmd_set_account(message: Message):
+    if not is_admin(message): return
+    global FF_UID, FF_PASSWORD
+    parts = message.text.split()
+    if len(parts) < 3:
+        return await message.answer("❌ استخدم: /set_account [UID] [PASSWORD]")
+    uid, pwd = parts[1], parts[2]
+    FF_UID = uid
+    FF_PASSWORD = pwd
+    config["ff_uid"] = uid
+    config["ff_password"] = pwd
+    save_config(config)
+    await message.answer(f"✅ تم تغيير الحساب الرئيسي إلى {uid}.\nسيتم إعادة الاتصال تلقائياً بعد إعادة التشغيل.")
+
+@dp.message(Command("set_restart"))
+async def cmd_set_restart(message: Message):
+    if not is_admin(message): return
+    global AUTO_RESTART_HOURS
+    parts = message.text.split()
+    if len(parts) < 2 or not parts[1].isdigit():
+        return await message.answer("❌ استخدم: /set_restart [عدد الساعات]")
+    hours = int(parts[1])
+    if hours < 1: hours = 1
+    AUTO_RESTART_HOURS = hours
+    config["auto_restart_hours"] = hours
+    save_config(config)
+    await message.answer(f"✅ تم ضبط إعادة التشغيل كل {hours} ساعة.")
+
+@dp.message(Command("restart"))
+async def cmd_restart(message: Message):
+    if not is_admin(message): return
+    await message.answer("🔄 جاري إعادة التشغيل...")
+    os._exit(1)
+
+@dp.message(Command("enable_api"))
+async def cmd_enable_api(message: Message):
+    if not is_admin(message): return
+    global API_ENABLED
+    API_ENABLED = True
+    config["api_enabled"] = True
+    save_config(config)
+    await message.answer("✅ تم تفعيل API.")
+
+@dp.message(Command("disable_api"))
+async def cmd_disable_api(message: Message):
+    if not is_admin(message): return
+    global API_ENABLED
+    API_ENABLED = False
+    config["api_enabled"] = False
+    save_config(config)
+    await message.answer("⛔ تم تعطيل API. جميع الطلبات سترفض.")
+
+@dp.message(Command("add_backup"))
+async def cmd_add_backup(message: Message):
+    if not is_admin(message): return
+    global BACKUP_ACCOUNTS
+    parts = message.text.split()
+    if len(parts) < 3:
+        return await message.answer("❌ استخدم: /add_backup [UID] [PASSWORD]")
+    uid, pwd = parts[1], parts[2]
+    BACKUP_ACCOUNTS[uid] = pwd
+    config["backup_accounts"] = BACKUP_ACCOUNTS
+    save_config(config)
+    await message.answer(f"✅ أضيف الحساب الاحتياطي {uid}.")
+
+@dp.message(Command("backups"))
+async def cmd_backups(message: Message):
+    if not is_admin(message): return
+    if not BACKUP_ACCOUNTS:
+        return await message.answer("لا توجد حسابات احتياطية.")
+    txt = "📋 الحسابات الاحتياطية:\n"
+    for uid, pwd in BACKUP_ACCOUNTS.items():
+        txt += f"- {uid}: {pwd}\n"
+    await message.answer(txt)
+
+@dp.message(Command("logs"))
+async def cmd_logs(message: Message):
+    if not is_admin(message): return
+    # في بيئة Railway يمكن قراءة السجلات عبر الأمر `railway logs`
+    await message.answer("📜 لعرض السجلات، استخدم أمر Railway CLI:\n`railway logs`")
+
+@dp.message(Command("api_key"))
+async def cmd_api_key(message: Message):
+    if not is_admin(message): return
+    await message.answer(f"🔑 API Key الحالي: {API_KEY}")
+
+async def start_telegram():
+    await dp.start_polling(bot)
+
 # ================== إعادة التشغيل التلقائي ==================
 async def auto_restart_scheduler():
     while True:
         await asyncio.sleep(AUTO_RESTART_HOURS * 3600)
         logging.info(f"🔄 إعادة تشغيل تلقائية بعد {AUTO_RESTART_HOURS} ساعة...")
-        os._exit(1)  # الخروج برمز خطأ لإجبار Railway على إعادة التشغيل
+        os._exit(1)
 
 # ================== نقاط نهاية API ==================
+def check_auth(api_key: str):
+    if not API_ENABLED:
+        raise HTTPException(status_code=503, detail="API معطل حالياً")
+    if api_key != API_KEY:
+        raise HTTPException(status_code=403, detail="مفتاح API غير صحيح")
+
 @app.on_event("startup")
 async def startup():
     logging.info("جاري تسجيل الدخول...")
@@ -364,11 +552,8 @@ async def startup():
         logging.error("فشل الاتصال باللعبة!")
     else:
         logging.info("تم الاتصال بنجاح.")
+    asyncio.create_task(start_telegram())
     asyncio.create_task(auto_restart_scheduler())
-
-def check_auth(api_key: str):
-    if api_key != API_KEY:
-        raise HTTPException(status_code=403, detail="مفتاح API غير صحيح")
 
 @app.get("/3")
 async def squad_3(uid: int = Query(...), api_key: str = Query("")):
@@ -413,15 +598,9 @@ async def health():
     return {
         "status": "ok",
         "connected": online_writer is not None,
-        "region": region
+        "region": region,
+        "api_enabled": API_ENABLED
     }
-
-@app.get("/restart")
-async def restart(api_key: str = Query("")):
-    """إعادة تشغيل يدوي للخادم"""
-    check_auth(api_key)
-    logging.info("🔄 إعادة تشغيل يدوية...")
-    os._exit(1)
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
