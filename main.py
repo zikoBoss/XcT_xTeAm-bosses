@@ -40,7 +40,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # ================== إعدادات ==================
 CONFIG_FILE = "config.json"
 DEFAULT_CONFIG = {
-    "api_key": "ziko",
+    "api_key": "zakaria_li7wak",
     "ff_uid": "5122793476",
     "ff_password": "EC5E780E52B4D338B33B154A6B52F38FA6DB338B6462A732BF28FD92914725E8",
     "auto_restart_hours": 4,
