@@ -4,8 +4,9 @@ import logging
 import os
 import sys
 import json
-from datetime import datetime
-from typing import Optional, Dict
+import time
+import random
+from datetime import datetime, timedelta
 
 import aiohttp
 import urllib3
@@ -21,32 +22,50 @@ from aiogram.client.default import DefaultBotProperties
 
 from xC4 import (
     OpEnSq, cHSq, SEnd_InV, ExiT, GenJoinSquadsPacket, Emote_k,
-    Ua, EnC_PacKeT, DecodE_HeX
+    Ua, EnC_PacKeT, DecodE_HeX, GeneRaTePk, CrEaTe_ProTo,
+    Key as XC4_KEY, Iv as XC4_IV
 )
+
+# استيراد دالة Keep-Alive إن وجدت، وإلا نستخدم دالة افتراضية
+try:
+    from xC4 import FS
+except ImportError:
+    async def FS(key, iv, region):
+        fields = {1: 9, 2: {1: 12480598706}}
+        packet = (await CrEaTe_ProTo(fields)).hex()
+        return await GeneRaTePk(packet, '0515', key, iv)
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# ================== إعدادات عامة ==================
+# ================== إعدادات ==================
 CONFIG_FILE = "config.json"
 DEFAULT_CONFIG = {
-    "api_key": "zakaria_li7wak",
-    "ff_uid": "4350165496",
-    "ff_password": "191F72DB7CCC970DD46300F7FE7A34F42D913942E0077508C5BBA23B58752839",
+    "api_key": "ziko",
+    "ff_uid": "5122793476",
+    "ff_password": "EC5E780E52B4D338B33B154A6B52F38FA6DB338B6462A732BF28FD92914725E8",
     "auto_restart_hours": 4,
     "api_enabled": True,
-    "backup_accounts": {
-        "4621889139": "YAKOUB_XVEY51BU15ZKADER",
-        "4621890577": "YAKOUB_XV2PEEQM8G4KADER",
-        "4621890995": "YAKOUB_XVWHYKP9IVLKADER",
-        "4621891384": "YAKOUB_XV9FIDIWP1YKADER",
-        "4621891954": "YAKOUB_XVGT5U2YHPRKADER"
+    "backup_accounts": {},
+    "session": {
+        "token": None,
+        "key": None,
+        "iv": None,
+        "region": None,
+        "uid": None,
+        "timestamp": None,
+        "created_at": None,
+        "open_id": None,
+        "access_token": None,
+        "online_ip": None,
+        "online_port": None,
+        "chat_ip": None,
+        "chat_port": None
     }
 }
 
-BOT_TOKEN = "8299557522:AAHNa8PxOiN7WRvBOr_zhnx2MeNBPWtEqXE"  # ⚠️ استبدله بتوكن بوتك
+BOT_TOKEN = "8299557522:AAHNa8PxOiN7WRvBOr_zhnx2MeNBPWtEqXE"  # ⚠️ استبدل بتوكن بوتك
 ADMIN_ID = 6848455321
 
-# تحميل الإعدادات
 def load_config():
     if os.path.exists(CONFIG_FILE):
         try:
@@ -67,15 +86,17 @@ FF_PASSWORD = config["ff_password"]
 API_KEY = config["api_key"]
 AUTO_RESTART_HOURS = config["auto_restart_hours"]
 API_ENABLED = config["api_enabled"]
-BACKUP_ACCOUNTS = config["backup_accounts"]
+BACKUP_ACCOUNTS = config.get("backup_accounts", {})
+SESSION = config.get("session", DEFAULT_CONFIG["session"])
 
 online_writer = None
 whisper_writer = None
 key = None
 iv = None
 region = None
+auth_token_global = None
 
-app = FastAPI(title="FPI Squad & Dance API")
+app = FastAPI(title="FPI Squad & Dance API (Anti-Ban Enhanced)")
 logging.basicConfig(level=logging.INFO)
 
 # ================== دوال الاتصال الأساسية ==================
@@ -243,9 +264,37 @@ async def SEndPacKeT(typE, packet):
         whisper_writer.write(packet)
         await online_writer.drain()
 
-# ================== تسجيل الدخول للعبة ==================
-async def login_to_freefire():
-    global key, iv, region, online_writer, whisper_writer
+# ================== نظام إدارة الجلسة الذكي ==================
+def is_session_valid():
+    if not SESSION.get("token") or not SESSION.get("created_at"):
+        return False
+    created_at = datetime.fromisoformat(SESSION["created_at"])
+    if datetime.now() - created_at > timedelta(hours=23):
+        logging.info("انتهت صلاحية الجلسة المخزنة")
+        return False
+    return True
+
+async def login_to_freefire(force_new=False):
+    global key, iv, region, online_writer, whisper_writer, auth_token_global, SESSION
+
+    if not force_new and is_session_valid():
+        logging.info("استخدام الجلسة المخزنة الصالحة...")
+        key = bytes.fromhex(SESSION["key"])
+        iv = bytes.fromhex(SESSION["iv"])
+        region = SESSION["region"]
+        auth_token_global = await xAuThSTarTuP(
+            int(SESSION["uid"]),
+            SESSION["token"],
+            int(SESSION["timestamp"]),
+            key,
+            iv
+        )
+        asyncio.create_task(run_online(SESSION["online_ip"], SESSION["online_port"]))
+        asyncio.create_task(run_chat(SESSION["chat_ip"], SESSION["chat_port"]))
+        await asyncio.sleep(5)
+        return True
+
+    logging.info("بدء تسجيل دخول جديد...")
     try:
         open_id, access_token = await GeNeRaTeAccEss(FF_UID, FF_PASSWORD)
         if not open_id:
@@ -270,57 +319,76 @@ async def login_to_freefire():
 
         online_ip, online_port = login_dec.Online_IP_Port.split(":")
         chat_ip, chat_port = login_dec.AccountIP_Port.split(":")
-        auth_token = await xAuThSTarTuP(int(bot_uid), token, int(timestamp), key, iv)
+        auth_token_global = await xAuThSTarTuP(int(bot_uid), token, int(timestamp), key, iv)
 
-        async def run_online():
-            global online_writer
-            while True:
-                try:
-                    reader, writer = await asyncio.open_connection(online_ip, int(online_port))
-                    online_writer = writer
-                    writer.write(bytes.fromhex(auth_token))
-                    await writer.drain()
-                    while True:
-                        data = await reader.read(4096)
-                        if not data:
-                            break
-                except:
-                    await asyncio.sleep(5)
+        SESSION.update({
+            "token": token,
+            "key": key.hex(),
+            "iv": iv.hex(),
+            "region": region,
+            "uid": str(bot_uid),
+            "timestamp": str(timestamp),
+            "created_at": datetime.now().isoformat(),
+            "open_id": open_id,
+            "access_token": access_token,
+            "online_ip": online_ip,
+            "online_port": online_port,
+            "chat_ip": chat_ip,
+            "chat_port": chat_port
+        })
+        config["session"] = SESSION
+        save_config(config)
 
-        async def run_chat():
-            global whisper_writer
-            while True:
-                try:
-                    reader, writer = await asyncio.open_connection(chat_ip, int(chat_port))
-                    whisper_writer = writer
-                    writer.write(bytes.fromhex(auth_token))
-                    await writer.drain()
-                    while True:
-                        data = await reader.read(4096)
-                        if not data:
-                            break
-                except:
-                    await asyncio.sleep(5)
-
-        asyncio.create_task(run_online())
-        asyncio.create_task(run_chat())
+        asyncio.create_task(run_online(online_ip, online_port))
+        asyncio.create_task(run_chat(chat_ip, chat_port))
         await asyncio.sleep(5)
+        logging.info(f"تم تسجيل الدخول بنجاح وحفظ الجلسة (UID: {bot_uid})")
         return True
     except Exception as e:
-        logging.error(f"Login failed: {e}")
+        logging.error(f"فشل تسجيل الدخول: {e}")
         return False
 
-# ================== أوامر السكواد والرقص ==================
+async def run_online(ip, port):
+    global online_writer
+    while True:
+        try:
+            reader, writer = await asyncio.open_connection(ip, int(port))
+            online_writer = writer
+            writer.write(bytes.fromhex(auth_token_global))
+            await writer.drain()
+            while True:
+                data = await reader.read(4096)
+                if not data:
+                    break
+        except:
+            await asyncio.sleep(5)
+
+async def run_chat(ip, port):
+    global whisper_writer
+    while True:
+        try:
+            reader, writer = await asyncio.open_connection(ip, int(port))
+            whisper_writer = writer
+            writer.write(bytes.fromhex(auth_token_global))
+            await writer.drain()
+            while True:
+                data = await reader.read(4096)
+                if not data:
+                    break
+        except:
+            await asyncio.sleep(5)
+
+# ================== أوامر السكواد والرقص (بتأخيرات عشوائية) ==================
 async def cmd_3(uid: int):
     try:
         PAc = await OpEnSq(key, iv, region)
         await SEndPacKeT('OnLine', PAc)
-        await asyncio.sleep(0.3)
+        await asyncio.sleep(random.uniform(0.2, 0.5))
         C = await cHSq(3, uid, key, iv, region)
         await SEndPacKeT('OnLine', C)
         V = await SEnd_InV(3, uid, key, iv, region)
         await SEndPacKeT('OnLine', V)
-        await asyncio.sleep(5)
+        await asyncio.sleep(random.uniform(4.5, 5.5))
         E = await ExiT(None, key, iv)
         await SEndPacKeT('OnLine', E)
         return True
@@ -332,12 +400,12 @@ async def cmd_5(uid: int):
     try:
         PAc = await OpEnSq(key, iv, region)
         await SEndPacKeT('OnLine', PAc)
-        await asyncio.sleep(0.3)
+        await asyncio.sleep(random.uniform(0.2, 0.5))
         C = await cHSq(5, uid, key, iv, region)
         await SEndPacKeT('OnLine', C)
         V = await SEnd_InV(5, uid, key, iv, region)
         await SEndPacKeT('OnLine', V)
-        await asyncio.sleep(5)
+        await asyncio.sleep(random.uniform(4.5, 5.5))
         E = await ExiT(None, key, iv)
         await SEndPacKeT('OnLine', E)
         return True
@@ -349,12 +417,12 @@ async def cmd_6(uid: int):
     try:
         PAc = await OpEnSq(key, iv, region)
         await SEndPacKeT('OnLine', PAc)
-        await asyncio.sleep(0.3)
+        await asyncio.sleep(random.uniform(0.2, 0.5))
         C = await cHSq(6, uid, key, iv, region)
         await SEndPacKeT('OnLine', C)
         V = await SEnd_InV(6, uid, key, iv, region)
         await SEndPacKeT('OnLine', V)
-        await asyncio.sleep(5)
+        await asyncio.sleep(random.uniform(4.5, 5.5))
         E = await ExiT(None, key, iv)
         await SEndPacKeT('OnLine', E)
         return True
@@ -366,10 +434,10 @@ async def cmd_inv(team_code: str, target_uid: int):
     try:
         join_packet = await GenJoinSquadsPacket(team_code, key, iv)
         await SEndPacKeT('OnLine', join_packet)
-        await asyncio.sleep(1.5)
+        await asyncio.sleep(random.uniform(1.2, 1.8))
         invite_packet = await SEnd_InV(5, target_uid, key, iv, region)
         await SEndPacKeT('OnLine', invite_packet)
-        await asyncio.sleep(3)
+        await asyncio.sleep(random.uniform(2.5, 3.5))
         exit_packet = await ExiT(None, key, iv)
         await SEndPacKeT('OnLine', exit_packet)
         return True
@@ -381,18 +449,41 @@ async def cmd_dance(emote_id: int, team_code: str, uids: list):
     try:
         p = await GenJoinSquadsPacket(team_code, key, iv)
         await SEndPacKeT('OnLine', p)
-        await asyncio.sleep(1.5)
+        await asyncio.sleep(random.uniform(1.2, 1.8))
         for uid in uids:
             emote_packet = await Emote_k(int(uid), emote_id, key, iv, region)
             await SEndPacKeT('OnLine', emote_packet)
-            await asyncio.sleep(0.3)
-        await asyncio.sleep(1)
+            await asyncio.sleep(random.uniform(0.2, 0.5))
+        await asyncio.sleep(random.uniform(0.8, 1.2))
         p = await ExiT(None, key, iv)
         await SEndPacKeT('OnLine', p)
         return True
     except Exception as e:
         logging.error(f"cmd_dance error: {e}")
         return False
+
+# ================== حلقات الحماية ==================
+async def keep_alive_loop():
+    while True:
+        await asyncio.sleep(60)
+        if online_writer and key and iv and region:
+            try:
+                alive_pkt = await FS(key, iv, region)
+                await SEndPacKeT('OnLine', alive_pkt)
+            except Exception as e:
+                logging.error(f"Keep-Alive error: {e}")
+
+async def token_refresh_loop():
+    while True:
+        await asyncio.sleep(3.5 * 3600)  # كل 3.5 ساعة
+        logging.info("🔄 تجديد الجلسة تلقائياً...")
+        await login_to_freefire(force_new=True)
+
+async def auto_restart_scheduler():
+    while True:
+        await asyncio.sleep(AUTO_RESTART_HOURS * 3600)
+        logging.info(f"🔄 إعادة تشغيل تلقائية بعد {AUTO_RESTART_HOURS} ساعة...")
+        os._exit(1)
 
 # ================== بوت تلغرام ==================
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
@@ -404,42 +495,53 @@ def is_admin(message: Message):
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     if not is_admin(message): return
-    await message.answer("🎮 أهلاً بك في لوحة تحكم FPI API!\nاستخدم /help لرؤية الأوامر.")
+    await message.answer("🎮 أهلاً بك في لوحة تحكم FPI API (Anti-Ban)!\nاستخدم /help لرؤية الأوامر.")
 
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
     if not is_admin(message): return
     await message.answer(
-        "📋 الأوامر المتاحة:\n"
-        "/status - حالة الاتصال الحالية\n"
-        "/settings - عرض الإعدادات\n"
-        "/set_account [UID] [PASSWORD] - تغيير حساب اللعبة الرئيسي\n"
+        "📋 الأوامر:\n"
+        "/status - حالة الاتصال والجلسة\n"
+        "/renew_session - تجديد الجلسة (تسجيل دخول جديد)\n"
+        "/set_account [UID] [PASSWORD] - تغيير الحساب\n"
         "/set_restart [ساعات] - تغيير مدة إعادة التشغيل\n"
         "/restart - إعادة تشغيل الخادم\n"
-        "/enable_api - تفعيل API\n"
-        "/disable_api - تعطيل API\n"
-        "/add_backup [UID] [PASSWORD] - إضافة حساب احتياطي\n"
+        "/enable_api /disable_api - تفعيل/تعطيل API\n"
         "/backups - عرض الحسابات الاحتياطية\n"
-        "/logs - آخر 10 أسطر من السجل (محاكاة)\n"
+        "/add_backup [UID] [PASSWORD] - إضافة حساب احتياطي"
     )
 
 @dp.message(Command("status"))
 async def cmd_status(message: Message):
     if not is_admin(message): return
     status = "✅ متصل" if online_writer else "❌ غير متصل"
+    session_age = "لا توجد جلسة"
+    if SESSION.get("created_at"):
+        created = datetime.fromisoformat(SESSION["created_at"])
+        age = datetime.now() - created
+        hours = age.seconds // 3600
+        minutes = (age.seconds % 3600) // 60
+        session_age = f"{hours} ساعة و {minutes} دقيقة"
     await message.answer(
         f"📊 الحالة:\n"
-        f"الاتصال باللعبة: {status}\n"
+        f"الاتصال: {status}\n"
         f"المنطقة: {region or 'N/A'}\n"
         f"API: {'مفعل' if API_ENABLED else 'معطل'}\n"
-        f"إعادة التشغيل كل: {AUTO_RESTART_HOURS} ساعة\n"
-        f"الحساب الرئيسي: {FF_UID}\n"
-        f"عدد الحسابات الاحتياطية: {len(BACKUP_ACCOUNTS)}"
+        f"الحساب: {FF_UID}\n"
+        f"عمر الجلسة: {session_age}\n"
+        f"الجلسة صالحة: {'نعم' if is_session_valid() else 'لا'}"
     )
 
-@dp.message(Command("settings"))
-async def cmd_settings(message: Message):
-    await cmd_status(message)
+@dp.message(Command("renew_session"))
+async def cmd_renew_session(message: Message):
+    if not is_admin(message): return
+    await message.answer("🔄 جاري تجديد الجلسة...")
+    success = await login_to_freefire(force_new=True)
+    if success:
+        await message.answer("✅ تم تجديد الجلسة بنجاح")
+    else:
+        await message.answer("❌ فشل تجديد الجلسة")
 
 @dp.message(Command("set_account"))
 async def cmd_set_account(message: Message):
@@ -453,8 +555,9 @@ async def cmd_set_account(message: Message):
     FF_PASSWORD = pwd
     config["ff_uid"] = uid
     config["ff_password"] = pwd
+    config["session"] = DEFAULT_CONFIG["session"]
     save_config(config)
-    await message.answer(f"✅ تم تغيير الحساب الرئيسي إلى {uid}.\nسيتم إعادة الاتصال تلقائياً بعد إعادة التشغيل.")
+    await message.answer(f"✅ تم تغيير الحساب إلى {uid}.\nسيتم تسجيل الدخول تلقائياً عند الحاجة.")
 
 @dp.message(Command("set_restart"))
 async def cmd_set_restart(message: Message):
@@ -517,26 +620,8 @@ async def cmd_backups(message: Message):
         txt += f"- {uid}: {pwd}\n"
     await message.answer(txt)
 
-@dp.message(Command("logs"))
-async def cmd_logs(message: Message):
-    if not is_admin(message): return
-    # في بيئة Railway يمكن قراءة السجلات عبر الأمر `railway logs`
-    await message.answer("📜 لعرض السجلات، استخدم أمر Railway CLI:\n`railway logs`")
-
-@dp.message(Command("api_key"))
-async def cmd_api_key(message: Message):
-    if not is_admin(message): return
-    await message.answer(f"🔑 API Key الحالي: {API_KEY}")
-
 async def start_telegram():
     await dp.start_polling(bot)
-
-# ================== إعادة التشغيل التلقائي ==================
-async def auto_restart_scheduler():
-    while True:
-        await asyncio.sleep(AUTO_RESTART_HOURS * 3600)
-        logging.info(f"🔄 إعادة تشغيل تلقائية بعد {AUTO_RESTART_HOURS} ساعة...")
-        os._exit(1)
 
 # ================== نقاط نهاية API ==================
 def check_auth(api_key: str):
@@ -547,12 +632,14 @@ def check_auth(api_key: str):
 
 @app.on_event("startup")
 async def startup():
-    logging.info("جاري تسجيل الدخول...")
+    logging.info("جاري بدء التشغيل...")
     if not await login_to_freefire():
         logging.error("فشل الاتصال باللعبة!")
     else:
         logging.info("تم الاتصال بنجاح.")
     asyncio.create_task(start_telegram())
+    asyncio.create_task(keep_alive_loop())
+    asyncio.create_task(token_refresh_loop())
     asyncio.create_task(auto_restart_scheduler())
 
 @app.get("/3")
@@ -599,7 +686,8 @@ async def health():
         "status": "ok",
         "connected": online_writer is not None,
         "region": region,
-        "api_enabled": API_ENABLED
+        "api_enabled": API_ENABLED,
+        "session_valid": is_session_valid()
     }
 
 if __name__ == "__main__":
